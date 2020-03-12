@@ -6,7 +6,6 @@ from itertools import groupby
 
 import numpy as np
 from fast_ctc_decode import beam_search
-import sys
 
 def decode_ref(encoded, labels):
 	"""
