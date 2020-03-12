@@ -72,7 +72,7 @@ class DecoderWriterRevised(Process):
             read_id, predictions, signal_data = job
             sequence, means = decode_revised(predictions, self.alphabet, signal_data, self.kmer_length, self.beamsize)
             if len(means) > 0:
-                sys.stderr.write("\n> No. of kmers: {}\n".format(len(means)))
+#                 sys.stderr.write("\n> No. of kmers: {}\n".format(len(means)))
                 reads.create_group(read_id)
                 reads[read_id]['means'] = means
             sys.stdout.write(">%s\n" % read_id)
