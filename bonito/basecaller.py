@@ -104,17 +104,22 @@ def basecall(rank, total_gpu, args, input_files):
     cleanup()
 
 def main(args):
-    total_gpu = torch.cuda.device_count()
+    # device ids
+    sys.stderr.write("INFO: DISTRIBUTED SETUP\n")
+    total_gpu_devices = torch.cuda.device_count()
 
+    sys.stderr.write("INFO: TOTAL GPU AVAILABLE: {}\n".format(total_gpu_devices))
+
+    # chunk the inputs
     input_files = glob("%s/*fast5" % args.reads_directory, recursive=True)
-    chunk_length = int(len(input_files) / total_gpu)
+    chunk_length = int(len(input_files) / total_gpu_devices) + 1
     file_chunks = []
     for i in range(0, len(input_files), chunk_length):
         file_chunks.append(input_files[i:i + chunk_length])
 
     mp.spawn(basecall,
-             args=(total_gpu, args, file_chunks),
-             nprocs=total_gpu,
+             args=(total_gpu_devices, args, file_chunks),
+             nprocs=total_gpu_devices,
              join=True)
 
 def argparser():
