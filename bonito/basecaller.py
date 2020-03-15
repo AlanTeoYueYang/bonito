@@ -55,6 +55,7 @@ def basecall(rank, total_gpu, args, input_files):
     device_id = rank
     sys.stderr.write("INFO: LOADING MODEL ON DEVICE: {}\n".format(device_id))
     model = load_model(args.model_directory, args.device, weights=int(args.weights), half=args.half)
+    alphabet = model.alphabet
     torch.cuda.set_device(device_id)
     model.to(device_id)
     model.eval()
@@ -65,40 +66,41 @@ def basecall(rank, total_gpu, args, input_files):
     num_reads = 0
     max_read_size = 1e9
     dtype = np.float16 if args.half else np.float32
-    sys.stderr.write('No of files:{}, index: {}'.format(len(input_files), rank))
-    hdf5_file = open('{}_{}.hdf5'.format(args.prefix, device_id), 'w')
-    fasta_file = open('{}_{}.fasta'.format(args.prefix, device_id), 'w')
-
-    output_directory = handle_output_directory(os.path.abspath(args.output_directory))
+    sys.stderr.write('No of files:{}, index: {}'.format(len(input_files[rank]), rank))
+    hdf5_file = h5py.File('{}/{}_{}.hdf5'.format(args.output_directory, args.prefix, device_id), 'w')
+    hdf5_file.create_group('Reads')
+    reads = hdf5_file['Reads']
+    fasta_file = open('{}/{}_{}.fasta'.format(args.output_directory, args.prefix, device_id), 'w')
 
     t0 = time.perf_counter()
     sys.stderr.write("STARTING INFERENCE\n")
     st = time.time()
-    for fast5 in input_files:
-        for read_id, raw_data in get_raw_data(fast5):
-            num_reads += 1
-            samples += len(raw_data)
-            signal_data = raw_data
+    with torch.no_grad():
+        for fast5 in input_files[device_id]:
+            for read_id, raw_data in get_raw_data(fast5):
+                num_reads += 1
+                samples += len(raw_data)
+                signal_data = raw_data
 
-            raw_data = raw_data[np.newaxis, np.newaxis, :].astype(dtype)
-            gpu_data = torch.tensor(raw_data).to(args.device)   
-            posteriors = model(gpu_data).exp().cpu().numpy().squeeze()
+                raw_data = raw_data[np.newaxis, np.newaxis, :].astype(dtype)
+                gpu_data = torch.tensor(raw_data).to(args.device)   
+                posteriors = model(gpu_data).exp().cpu().numpy().squeeze()
 
-            sequence, means = decode_revised(posteriors, model.alphabet, signal_data, args.kmer_length, args.beamsize)
-            if len(means) > 0:
-                sys.stderr.write("\n> No. of kmers: {}\n".format(len(means)))
-                reads.create_group(read_id)
-                reads[read_id]['means'] = means
-            fasta_file.write(">%s\n" % read_id)
-            fasta_file.write("%s\n" % os.linesep.join(wrap(sequence, 100)))
+                sequence, means = decode_revised(posteriors, alphabet, signal_data, args.kmer_length, args.beamsize)
+                if len(means) > 0:
+                    # sys.stderr.write("\n> No. of kmers: {}\n".format(len(means)))
+                    reads.create_group(read_id)
+                    reads[read_id]['means'] = means
+                fasta_file.write(">%s\n" % read_id)
+                fasta_file.write("%s\n" % os.linesep.join(wrap(sequence, 100)))
 
-        ct = time.time()
-        sys.stderr.write("\nINFO: FINISHED PROCESSING: {}/{} FILES. DEVICE: {} ELAPSED TIME: {}".format(count, len(input_files), device_id, ct-st))
+            ct = time.time()
+            sys.stderr.write("\nINFO: FINISHED PROCESSING: {}/{} FILES. DEVICE: {} ELAPSED TIME: {}".format(num_reads, len(input_files), device_id, ct-st))
 
     t1 = time.perf_counter()
     sys.stderr.write("INFO: TOTAL READS: %s\n" % num_reads)
     sys.stderr.write("INFO: TOTAL DURATION %.1E\n" % (t1 - t0))
-    sys.stderr.write("INFO: SAMPLES PER SECOND %.1E\n" % (count/(t1 - t0)))
+    sys.stderr.write("INFO: SAMPLES PER SECOND %.1E\n" % (num_reads/(t1 - t0)))
     sys.stderr.write("DONE\n")
 
     cleanup()
@@ -133,7 +135,6 @@ def argparser():
     parser.add_argument("prefix")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--weights", default="0", type=str)
-    parser.add_argument("--alphabet", default="NACGT", type=str)
     parser.add_argument("--beamsize", default=5, type=int)
     parser.add_argument("--kmer_length", default=5, type=int)
     parser.add_argument("--half", action="store_true", default=False)
